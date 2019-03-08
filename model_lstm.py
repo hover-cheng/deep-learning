@@ -3,7 +3,7 @@ from tensorflow.contrib import rnn
 
 
 # 定义LSTM网络模型
-def lstm_net(name, data, n_hidden, n_steps, batch_size, layer_num=1, keep_prob=1.0, regularizer=None):
+def lstm_net(name, data, n_hidden, n_steps, batch_size, regularizer, is_traning=True, layer_num=1, keep_prob=1.0):
     with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
         # 将输入的数据转成2维进行计算，计算后的结果作为隐藏层输入
         # reshaped = tf.reshape(data, [-1, n_input])
@@ -39,7 +39,7 @@ def lstm_net(name, data, n_hidden, n_steps, batch_size, layer_num=1, keep_prob=1
         # last_state = tf.matmul(X_out, weight_out) + biase_out
         # last_state = tf.nn.relu(last_state)
         last_state = finnal_state[-1][1]
-        if regularizer is not None:
+        if is_traning is not None:
             # tf.trainable_variables() 得到所有可以训练的参数
             tf.add_to_collection('losses', tf.reduce_sum([regularizer(v) for v in tf.trainable_variables()]))
         # weight_in_mean = tf.reduce_mean(weight_in)
@@ -52,10 +52,10 @@ def lstm_net(name, data, n_hidden, n_steps, batch_size, layer_num=1, keep_prob=1
 
 
 # 定义全链接层
-def fc_net(name, inputdata, w_shape, regularizer=None):
+def fc_net(name, inputdata, w_shape, regularizer, is_traning=True):
     with tf.variable_scope(name):
         weight = tf.get_variable('weights', w_shape, initializer=tf.truncated_normal_initializer(stddev=0.1))
-        if regularizer is not None:
+        if is_traning is not None:
             tf.add_to_collection('losses', regularizer(weight))
         biases = tf.get_variable('biases', w_shape[-1], initializer=tf.constant_initializer(0.1))
         conve = tf.matmul(inputdata, weight) + biases
