@@ -1,27 +1,9 @@
 import os
+import time
+import shutil
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib import rnn
-import time
-
-BATCH_SIZE = 16
-CAPACITY = 2000 + 4 * BATCH_SIZE
-REGULARAZTION_RATE = 0.001
-LEARNING_RATE = 0.0001
-KEEP_PROB = 0.75
-
-# LSTM中隐藏层的数量
-N_HIDDEN = 2000
-# LSTM的层数
-LAYER_NUM = 3
-# 输入词语的个数
-N_INPUT = 7
-# 即每做一次预测,需要先输入1行
-N_STEPS = 1
-# 输出类别的数量
-CLASS_NUM = 33
-# 输出类别的个数
-OUTPUTNUM = 7
+import model_lstm
 
 # 在tensorflow的log日志等级如下：
 # - 0：显示所有日志（默认等级）
@@ -30,142 +12,87 @@ OUTPUTNUM = 7
 # - 3：显示error日志信息
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+batch_size = 256
+keep_prob = 0.5
+regularaztion_rate = 1e-3
+learning_rate = 0.001
+n_hidden = 100
+n_input = 7
+n_steps = 1
+n_classnum = 34
+n_output = 7
 
-class lstm(object):
-    def __init__(self, LEARNING_RATE, REGULARAZTION_RATE, BATCH_SIZE, CAPACITY, N_INPUT, N_STEPS, N_HIDDEN, LAYER_NUM, CLASS_NUM, OUTPUTNUM=1, KEEP_PROB=1):
-        self.learning_rate = LEARNING_RATE
-        self.regularaztion_rate = REGULARAZTION_RATE
-        self.batch_size = BATCH_SIZE
-        self.capacity = CAPACITY
-        self.n_input = N_INPUT
-        self.n_steps = N_STEPS
-        self.n_hidden = N_HIDDEN
-        self.layer_num = LAYER_NUM
-        self.class_num = CLASS_NUM
-        self.outputnum = OUTPUTNUM
-        self.keep_prob = KEEP_PROB
 
-    # 读取数据，转换成向量
-    def read_data(self, filename):
-        with open(filename) as f:
-            data = f.readline()
-        data_list = data.split()
-        np_data = np.array(data_list[: -self.n_input], np.float32)
-        init_data = [0 for x in range(self.class_num)]
-        list_label = []
-        # 转换程one-hot模式，并去掉源数据中的0
-        for i in data_list[self.n_input:]:
-            tmp = init_data[:]
-            tmp[int(i) - 1] = 1
-            list_label.append(tmp)
-        input_data = np.reshape(np_data, [-1, self.n_input])
-        input_label = np.reshape(np.concatenate(np.array(list_label, np.float32)), [-1, self.class_num * self.outputnum])
-        input_data = (input_data - input_data.min()) / (input_data.max() - input_data.min())
-        return input_data, input_label
+def read_data(filename):
+    with open(filename) as f:
+        data = f.readline()
+    data_list = data.split()
+    np_data = np.array(data_list[: -n_input], np.float32)
+    np_label = np.array(data_list[n_input:], np.int32)
+    input_data = np.reshape(np_data, [-1, n_input])
+    input_label = np.reshape(np_label, [-1, n_input])
+    return input_data, input_label
 
-    # 生成batch
-    def get_batch(self, data, label):
-        input_queue = tf.train.slice_input_producer([data, label])
-        label = input_queue[1]
-        data_contents = input_queue[0]
-        date_batch, label_batch = tf.train.shuffle_batch([data_contents, label], batch_size=self.batch_size, num_threads=4, capacity=self.capacity, min_after_dequeue=2 * self.batch_size)
-        date_batch = tf.reshape(date_batch, [self.batch_size, self.n_input, self.n_steps])
-        label_batch = tf.reshape(label_batch, [self.batch_size, self.class_num * self.outputnum])
-        return date_batch, label_batch
 
-    # 定义LSTM网络模型
-    def inference(self, data, batch_size=None, keep_prob=None, regularizer=None):
-        with tf.variable_scope('lstm', reuse=tf.AUTO_REUSE):
-            # 将输入的数据转成2维进行计算，计算后的结果作为隐藏层输入
-            reshaped = tf.reshape(data, [-1, self.n_input])
-            weight_in = tf.Variable(tf.random_normal([self.n_input, self.n_hidden]))
-            weight_out = tf.Variable(tf.random_normal([self.n_hidden, self.class_num * self.outputnum]))
-            biase_in = tf.Variable(tf.constant(0.1, shape=[self.n_hidden, ]))
-            biase_out = tf.Variable(tf.constant(0.1, shape=[self.class_num * self.outputnum, ]))
-            X_in = tf.matmul(reshaped, weight_in) + biase_in
-            # 将数据转为3维，作为LSTM_cell的输入
-            X_in = tf.reshape(X_in, [-1, self.n_steps, self.n_hidden])
-            # 定义一层 LSTM_cell，只需要说明 n_hidden, 它会自动匹配输入的 X 的维度
-            lstm_cell = rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0, state_is_tuple=True)
-            # 添加 dropout layer, 一般只设置 output_keep_prob
-            if keep_prob is not None:
-                lstm_cell = rnn.DropoutWrapper(cell=lstm_cell, input_keep_prob=1.0, output_keep_prob=keep_prob)
-            else:
-                lstm_cell = rnn.DropoutWrapper(cell=lstm_cell, input_keep_prob=1.0, output_keep_prob=self.keep_prob)
-            # 调用 MultiRNNCell 来实现多层 LSTM
-            lstm_cell = rnn.MultiRNNCell([lstm_cell] * self.layer_num, state_is_tuple=True)
-            # 用全零来初始化state
-            if batch_size is not None:
-                init_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)
-            else:
-                init_state = lstm_cell.zero_state(self.batch_size, dtype=tf.float32)
-            # 调用 dynamic_rnn() 来让我们构建好的网络运行起来
-            # 当 time_major==False 时， outputs.shape = [batch_size, n_steps, n_hidden]
-            # 所以，可以取 h_state = outputs[:, -1, :] 作为最后输出
-            # state.shape = [layer_num, 2, batch_size, n_hidden],
-            # 或者，可以取 h_state = state[-1][1] 作为最后输出
-            # 最后输出维度是 [batch_size, n_hidden]
-            outputs, finnal_state = tf.nn.dynamic_rnn(lstm_cell, X_in, initial_state=init_state, time_major=False)
-            last_state = tf.matmul(finnal_state[-1][1], weight_out) + biase_out
-            if regularizer is not None:
-                tf.add_to_collection('losses', regularizer(weight_in))
-            weight_in_mean = tf.reduce_mean(weight_in)
-            tf.summary.scalar('weight_in_mean', weight_in_mean)
-            tf.summary.histogram('weight_in_mean', weight_in_mean)
-            weight_out_mean = tf.reduce_mean(weight_out)
-            tf.summary.scalar('weight_out_mean', weight_out_mean)
-            tf.summary.histogram('weight_out_mean', weight_out_mean)
-        return last_state
+def get_batch(data, label, batch_size):
+    input_queue = tf.train.slice_input_producer([data, label])
+    label = input_queue[1]
+    data_contents = input_queue[0]
+    date_batch, label_batch = tf.train.batch([data_contents, label], batch_size=batch_size, num_threads=4, capacity=batch_size * 4 + 2000)
+    return date_batch, label_batch
 
-    # 定义损失函数
-    def losses(self, logits, labels):
-        with tf.variable_scope('loss') as scope:
-            logits = tf.reshape(logits, [-1, self.class_num])
-            labels = tf.reshape(labels, [-1, self.class_num])
-            cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
-            ses_loss = tf.reduce_mean(cross_entropy)
-            tf.add_to_collection('losses', ses_loss)
-            loss = tf.add_n(tf.get_collection('losses'))
-            tf.summary.scalar(scope.name + '/loss', loss)
-        return loss
 
-    # 定义梯度下降函数
-    def trainning(self, loss):
-        with tf.name_scope('optimizer'):
-            optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate)
-            global_step = tf.Variable(0, name='global_step', trainable=False)
-            train_op = optimizer.minimize(loss, global_step=global_step)
-        return train_op
-
-    # 定义模型的准确率
-    def evaluation(self, logits, labels):
-        with tf.variable_scope('accuracy') as scope:
-            logits = tf.reshape(logits, [-1, self.class_num])
-            labels = tf.reshape(labels, [-1, self.class_num])
-            correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
-            accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-            tf.summary.scalar('accuracy', accuracy)
-        return accuracy
-
-    # 训练模型
-    def run_training(self, txt_dir, logs_train_dir):
-        train, train_label = self.read_data(txt_dir)
-        train_batch, train_label_batch = self.get_batch(train, train_label)
-        # 使用L2正则化方法
-        regularizer = tf.contrib.layers.l2_regularizer(self.regularaztion_rate)
-        # LSTM网络
-        train_logits = self.inference(train_batch, regularizer=regularizer)
-        train_loss = self.losses(train_logits, train_label_batch)
-        train_op = self.trainning(train_loss)
-        train_acc = self.evaluation(logits=train_logits, labels=train_label_batch)
+def run_training(filename, logs_dir):
+    # 删除目录下的文件
+    if not os.path.exists(logs_dir):
+        os.mkdir(logs_dir)
+    files = os.listdir(logs_dir)
+    for i in files:
+        if os.path.isfile(os.path.join(logs_dir, i)):
+            os.remove(os.path.join(logs_dir, i))
+        else:
+            # shutil库为python内置库，是一个对文件及文件夹高级操作的库,
+            # 递归删除文件夹
+            shutil.rmtree(os.path.join(logs_dir, i))
+    data, data_label = read_data(filename)
+    with tf.Graph().as_default():
+        train = data[:2330] / 33.
+        test = data[2330:] / 33.
+        train_label = tf.one_hot(data_label[:2330], n_classnum)
+        test_label = tf.one_hot(data_label[2330:], n_classnum)
+        train_batch, train_label_batch = get_batch(train, train_label, batch_size)
+        test_batch, test_label_batch = get_batch(test, test_label, batch_size=30)
+        # X_ = tf.placeholder(tf.float32, [batch_size, n_input])
+        # Y_ = tf.placeholder(tf.float32, [batch_size, n_output, n_classnum])
+        # 使用is_traning来判断是训练还是验证，并传递不通的keep_prob值
+        is_traning = tf.placeholder(tf.bool, shape=())
+        # tf.cond()类似于c语言中的if...else...，用来控制数据流向
+        X_ = tf.cond(is_traning, lambda: train_batch, lambda: test_batch)
+        Y_ = tf.cond(is_traning, lambda: train_label_batch, lambda: test_label_batch)
+        keep_prob_place = tf.cond(is_traning, lambda: keep_prob, lambda: 1.0)
+        batch_size_place = tf.cond(is_traning, lambda: batch_size, lambda: 30)
+        regularizer = tf.contrib.layers.l2_regularizer(regularaztion_rate)
+        fc1 = model_lstm.fc_net('fc1', X_, [n_input, 50], regularizer)
+        fc1 = tf.nn.relu(fc1)
+        fc1 = tf.nn.dropout(fc1, keep_prob_place)
+        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=50, n_steps=1, batch_size=batch_size_place, keep_prob=keep_prob_place)
+        fc2 = model_lstm.fc_net('fc2', lstm_1, [50, 100], regularizer)
+        fc2 = tf.nn.relu(fc2)
+        fc2 = tf.nn.dropout(fc2, keep_prob_place)
+        lstm2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=batch_size_place, keep_prob=keep_prob_place)
+        fc3 = model_lstm.fc_net('fc3', lstm2, [n_hidden * n_steps, n_output * n_classnum], regularizer)
+        loss = model_lstm.losses(fc3, Y_, n_classnum)
+        op = model_lstm.trainning(loss, learning_rate)
+        acc = model_lstm.evaluation(fc3, Y_, n_classnum)
         # 合并摘要，包含所有输入摘要的值
         summary_op = tf.summary.merge_all()
         # 使用GPU训练
         config = tf.ConfigProto()
         # 占用GPU70%的显存,超出部分使用内存
-        config.gpu_options.per_process_gpu_memory_fraction = 0.7
+        config.gpu_options.per_process_gpu_memory_fraction = 0.8
         sess = tf.Session(config=config)
-        train_writer = tf.summary.FileWriter(logs_train_dir, sess.graph)
+        train_writer = tf.summary.FileWriter(os.path.join(logs_dir, 'train'), sess.graph)
+        test_writer = tf.summary.FileWriter(os.path.join(logs_dir, 'test'), sess.graph)
         saver = tf.train.Saver()
         sess.run(tf.global_variables_initializer())
         # 协调器，协调线程间的关系可以视为一种信号量，用来做同步
@@ -173,20 +100,29 @@ class lstm(object):
         threads = tf.train.start_queue_runners(sess=sess, coord=coord)
         try:
             step = 0
-            print('start training......')
+            print('start training data...')
             while True:
                 if coord.should_stop():
                     break
                 start_time = time.time()
                 step += 1
-                _, tra_loss, tra_acc = sess.run([train_op, train_loss, train_acc])
+                train_data, train_label_data = sess.run([train_batch, train_label_batch])
+                test_data, test_label_data = sess.run([test_batch, test_label_batch])
+                # tmp = sess.run(fc3, feed_dict={X_: train_data, Y_: train_label_data})
+                # print(tmp.shape)
+                # return
+                _, out_loss, out_acc = sess.run([op, loss, acc], feed_dict={is_traning: True})
                 duration = time.time() - start_time
-                if step % 100 == 0:
-                    print('Step %d, train loss = %.5f, train acc = %.5f,  train time = %.5f' % (step, tra_loss, tra_acc, duration))
-                    summary_str = sess.run(summary_op)
-                    train_writer.add_summary(summary_str, step)
-                if step % 500 == 0:
-                    checkpoint_path = os.path.join(logs_train_dir, 'model.ckpt')
+                if step % 100 == 0 and step % 1000 != 0:
+                    summary_str_train = sess.run(summary_op, feed_dict={is_traning: True})
+                    train_writer.add_summary(summary_str_train, global_step=step)
+                    summary_str_test = sess.run(summary_op, feed_dict={is_traning: False})
+                    test_writer.add_summary(summary_str_test, global_step=step)
+                    print('Step %d, train loss = %.5f, train acc = %.5f train time = %.5f' % (step, out_loss, out_acc, duration))
+                if step % 1000 == 0:
+                    out_loss_, out_acc_ = sess.run([loss, acc], feed_dict={is_traning: False})
+                    print('Step %d, train loss = %.5f, train acc = %.5f, test loss = %.5f,test acc = %.5f train time = %.5f' % (step, out_loss, out_acc, out_loss_, out_acc_, duration))
+                    checkpoint_path = os.path.join(logs_dir, 'model.ckpt')
                     saver.save(sess, checkpoint_path, global_step=step)
         except tf.errors.OutOfRangeError:
             print('Done training -- epoch limit reached')
@@ -197,41 +133,38 @@ class lstm(object):
         coord.join(threads)
         sess.close()
 
-    # 验证模型
-    def check_lstm(self, data, logs_dir):
-        npdata = np.reshape(data, [self.n_input, 1])
-        with tf.Graph().as_default():
-            X = tf.placeholder(tf.float32, shape=[self.n_input, 1])
-            logit = self.inference(X, batch_size=1)
-            logit = tf.nn.softmax(logit)
-            saver = tf.train.Saver()
-            with tf.Session() as sess:
-                ckpt = tf.train.get_checkpoint_state(logs_dir)
-                if ckpt and ckpt.model_checkpoint_path:
-                    global_step = ckpt.model_checkpoint_path.split('.')[-1].split('-')[-1]
-                    saver.restore(sess, ckpt.model_checkpoint_path)
-                else:
-                    print('No checkpoint file found')
-                prediction = sess.run(logit, feed_dict={X: npdata})
-                outputdata = np.reshape(prediction, [-1, self.n_input, self.class_num])
-                # 由于前面处理数据的时候将0去掉了，这需要把最大值再加上1
-                outputdata = (outputdata[0].argmax(1) + 1).tolist()
-                return outputdata
 
-    def read_list(self, filename):
-        with open(filename) as f:
-            data = f.readline()
-        list_data = [data.split(' ')[i:i + self.n_input] for i in range(0, len(data.split(' ')), self.n_input)]
-        return list_data
+# 验证模型
+def check_lstm(data, logs_dir):
+    npdata = np.reshape(data, [1, n_input]) / 33.
+    with tf.Graph().as_default():
+        X = tf.placeholder(tf.float32, shape=[1, n_input])
+        # check_logits = lstm_net(X, batch_size=1, keep_prob=1)
+        fc1 = model_lstm.fc_net('fc1', X_, [n_input, 50])
+        fc1 = tf.nn.relu(fc1)
+        fc1 = tf.nn.dropout(fc1, keep_prob=1.0)
+        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=50, n_steps=1, batch_size=1, keep_prob=1.0)
+        fc2 = model_lstm.fc_net('fc2', lstm_1, [50, 100])
+        fc2 = tf.nn.relu(fc2)
+        fc2 = tf.nn.dropout(fc2, keep_prob=1.0)
+        lstm2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=1, keep_prob=1.0)
+        fc3 = model_lstm.fc_net('fc3', lstm2, [n_hidden * n_steps, n_output * n_classnum])
+        check_logits = tf.nn.softmax(fc3)
+        # config = tf.ConfigProto()
+        # 占用GPU70%的显存,超出部分使用内存
+        # config.gpu_options.per_process_gpu_memory_fraction = 0.8
+        saver = tf.train.Saver()
+        with tf.Session() as sess:
+            ckpt = tf.train.get_checkpoint_state(logs_dir)
+            if ckpt and ckpt.model_checkpoint_path:
+                global_step = ckpt.model_checkpoint_path.split('.')[-1].split('-')[-1]
+                saver.restore(sess, ckpt.model_checkpoint_path)
+            else:
+                print('No checkpoint file found')
+            prediction = sess.run(check_logits, feed_dict={X: npdata})
+            outputdata = prediction.reshape(-1, class_num).argmax(1).tolist()
+        return outputdata
 
 
-if __name__ == '__main__':
-    lobj = lstm(LEARNING_RATE, REGULARAZTION_RATE, BATCH_SIZE, CAPACITY, N_INPUT, N_STEPS, N_HIDDEN, LAYER_NUM, CLASS_NUM, OUTPUTNUM, KEEP_PROB)
-    # lobj.run_training('E:\\aa_new.txt', 'E:\\log')
-    data = lobj.read_list('E:\\aa_new.txt')
-    for i in data:
-        print('input_data: ', i)
-        output = lobj.check_lstm(i, 'E:\\log')
-        # output = [reverse_data[x] for x in output]
-        print('output_data: ', output)
-        time.sleep(2)
+if __name__ == "__main__":
+    run_training('E:\\aa_new.txt', 'E:\\log\\lstm_cp')
