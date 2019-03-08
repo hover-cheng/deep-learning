@@ -12,10 +12,12 @@ import model_lstm
 # - 3：显示error日志信息
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-batch_size = 256
+train_batch_size = 256
+test_batch_size = 30
 keep_prob = 0.5
 regularaztion_rate = 1e-3
 learning_rate = 0.001
+n_h1 = 50
 n_hidden = 100
 n_input = 7
 n_steps = 1
@@ -60,8 +62,8 @@ def run_training(filename, logs_dir):
         test = data[2330:] / 33.
         train_label = tf.one_hot(data_label[:2330], n_classnum)
         test_label = tf.one_hot(data_label[2330:], n_classnum)
-        train_batch, train_label_batch = get_batch(train, train_label, batch_size)
-        test_batch, test_label_batch = get_batch(test, test_label, batch_size=30)
+        train_batch, train_label_batch = get_batch(train, train_label, train_batch_size)
+        test_batch, test_label_batch = get_batch(test, test_label, test_batch_size)
         # X_ = tf.placeholder(tf.float32, [batch_size, n_input])
         # Y_ = tf.placeholder(tf.float32, [batch_size, n_output, n_classnum])
         # 使用is_traning来判断是训练还是验证，并传递不通的keep_prob值
@@ -70,17 +72,19 @@ def run_training(filename, logs_dir):
         X_ = tf.cond(is_traning, lambda: train_batch, lambda: test_batch)
         Y_ = tf.cond(is_traning, lambda: train_label_batch, lambda: test_label_batch)
         keep_prob_place = tf.cond(is_traning, lambda: keep_prob, lambda: 1.0)
-        batch_size_place = tf.cond(is_traning, lambda: batch_size, lambda: 30)
+        batch_size_place = tf.cond(is_traning, lambda: train_batch_size, lambda: test_batch_size)
         regularizer = tf.contrib.layers.l2_regularizer(scale=regularaztion_rate)
-        fc1 = model_lstm.fc_net('fc1', X_, w_shape=[n_input, 50], regularizer=regularizer, is_traning=is_traning)
+        fc1 = model_lstm.fc_net('fc1', X_, w_shape=[n_input, n_h1], regularizer=regularizer, is_traning=is_traning)
         fc1 = tf.nn.relu(fc1)
         fc1 = tf.nn.dropout(fc1, keep_prob_place)
-        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=50, n_steps=1, batch_size=batch_size_place, keep_prob=keep_prob_place, regularizer=regularizer, is_traning=is_traning, )
-        fc2 = model_lstm.fc_net('fc2', lstm_1, [50, 100], regularizer=regularizer, is_traning=is_traning)
+        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=n_h1, n_steps=1, batch_size=batch_size_place,
+                                     keep_prob=keep_prob_place, regularizer=regularizer, is_traning=is_traning)
+        fc2 = model_lstm.fc_net('fc2', lstm_1, [n_h1, n_hidden], regularizer=regularizer, is_traning=is_traning)
         fc2 = tf.nn.relu(fc2)
         fc2 = tf.nn.dropout(fc2, keep_prob_place)
-        lstm2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=batch_size_place, keep_prob=keep_prob_place, regularizer=regularizer, is_traning=is_traning, )
-        fc3 = model_lstm.fc_net('fc3', lstm2, [n_hidden * n_steps, n_output * n_classnum], regularizer=regularizer, is_traning=is_traning)
+        lstm_2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=batch_size_place,
+                                     keep_prob=keep_prob_place, regularizer=regularizer, is_traning=is_traning)
+        fc3 = model_lstm.fc_net('fc3', lstm_2, [n_hidden * n_steps, n_output * n_classnum], regularizer, is_traning)
         loss = model_lstm.losses(fc3, Y_, n_classnum)
         op = model_lstm.trainning(loss, learning_rate)
         acc = model_lstm.evaluation(fc3, Y_, n_classnum)
@@ -140,15 +144,13 @@ def check_lstm(data, logs_dir):
     with tf.Graph().as_default():
         X = tf.placeholder(tf.float32, shape=[1, n_input])
         # check_logits = lstm_net(X, batch_size=1, keep_prob=1)
-        fc1 = model_lstm.fc_net('fc1', X_, [n_input, 50])
+        fc1 = model_lstm.fc_net('fc1', X_, w_shape=[n_input, n_h1])
         fc1 = tf.nn.relu(fc1)
-        fc1 = tf.nn.dropout(fc1, keep_prob=1.0)
-        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=50, n_steps=1, batch_size=1, keep_prob=1.0)
-        fc2 = model_lstm.fc_net('fc2', lstm_1, [50, 100])
+        lstm_1 = model_lstm.lstm_net('lstm_1', fc1, n_hidden=n_h1, n_steps=1, batch_size=1)
+        fc2 = model_lstm.fc_net('fc2', lstm_1, [n_h1, n_hidden])
         fc2 = tf.nn.relu(fc2)
-        fc2 = tf.nn.dropout(fc2, keep_prob=1.0)
-        lstm2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=1, keep_prob=1.0)
-        fc3 = model_lstm.fc_net('fc3', lstm2, [n_hidden * n_steps, n_output * n_classnum])
+        lstm_2 = model_lstm.lstm_net('lstm_2', fc2, n_hidden, n_steps, batch_size=1,)
+        fc3 = model_lstm.fc_net('fc3', lstm_2, [n_hidden * n_steps, n_output * n_classnum])
         check_logits = tf.nn.softmax(fc3)
         # config = tf.ConfigProto()
         # 占用GPU70%的显存,超出部分使用内存
