@@ -3,22 +3,22 @@ from tensorflow.contrib import rnn
 
 
 # 定义LSTM网络模型
-def lstm_net(name, data, n_hidden, n_steps, batch_size, regularizer=False, is_traning=False, layer_num=1, keep_prob=1.0):
+def lstm_net(name, data, n_hidden, n_steps, n_input, n_output, batch_size, regularizer=False, is_traning=False, layer_num=1, keep_prob=1.0):
     with tf.variable_scope(name):
         # 将输入的数据转成2维进行计算，计算后的结果作为隐藏层输入
-        # reshaped = tf.reshape(data, [-1, n_input])
         # 由于使用了relu作为激活函数，所以权重使用He初始值，He初始值使用标准差 √2/n(n为前一层的数量)为的高斯分布
         # 当激活函数为sigmoid或tanh等S型曲线函数时，权重使用Xavier初始值，Xavier初始值使用标准差 √1/n(n为前一层的数量)为的高斯分布
-        # weight_in = tf.Variable(tf.random_normal([n_input, n_hidden]))
-        # weight_out = tf.Variable(tf.random_normal([n_hidden, n_output]))
-        # biase_in = tf.Variable(tf.constant(0.1, shape=[n_hidden, ]))
-        # biase_out = tf.Variable(tf.constant(0.1, shape=[n_output, ]))
+        reshaped = tf.reshape(data, [-1, n_input * n_steps])
+        weight_in = tf.Variable(tf.random_normal([n_input * n_steps, n_hidden * n_steps]))
+        weight_out = tf.Variable(tf.random_normal([n_hidden, n_output]))
+        biase_in = tf.Variable(tf.constant(0.1, shape=[n_hidden * n_steps]))
+        biase_out = tf.Variable(tf.constant(0.1, shape=[n_output]))
         # 输入rnn之前先加一层线性变换，可选
-        # X_in = tf.nn.dropout(reshaped, keep_prob)
-        # X_in = tf.matmul(X_in, weight_in) + biase_in
+        X_in = tf.matmul(reshaped, weight_in) + biase_in
         # X_in = tf.nn.relu(X_in)
+        # X_in = tf.nn.dropout(X_in, keep_prob)
         # 将数据转为3维，作为LSTM_cell的输入
-        X_in = tf.reshape(data, [-1, n_steps, n_hidden])
+        X_in = tf.reshape(X_in, [-1, n_steps, n_hidden])
         # 定义一层 LSTM_cell，只需要说明 n_hidden, 它会自动匹配输入的 X 的维度
         lstm_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True)
         # 添加 dropout layer, 一般只设置 output_keep_prob
@@ -33,13 +33,13 @@ def lstm_net(name, data, n_hidden, n_steps, batch_size, regularizer=False, is_tr
         # state.shape = [layer_num, 2, batch_size, n_hidden],
         # 或者，可以取 h_state = state[-1][1] 作为最后输出
         # 最后输出维度是 [batch_size, n_hidden]
-        # outputs, finnal_state = tf.nn.dynamic_rnn(lstm_cell, inputs=X_in, initial_state=init_state, time_major=False)
-        outputs, finnal_state = tf.nn.dynamic_rnn(lstm_cell, inputs=X_in, dtype=tf.float32, time_major=False)
+        outputs, finnal_state = tf.nn.dynamic_rnn(lstm_cell, inputs=X_in, initial_state=init_state, time_major=False)
+        # outputs, finnal_state = tf.nn.dynamic_rnn(lstm_cell, inputs=X_in, dtype=tf.float32, time_major=False)
         # X_out = tf.nn.dropout(finnal_state[-1][1], keep_prob)
-        # last_state = tf.matmul(X_out, weight_out) + biase_out
+        last_state = tf.matmul(finnal_state[-1][1], weight_out) + biase_out
         # last_state = tf.nn.relu(last_state)
-        last_state = finnal_state[-1][1]
-        if is_traning is not None and regularizer is not None:
+        # last_state = finnal_state[-1][1]
+        if is_traning is not False and regularizer is not False:
             # tf.trainable_variables() 得到所有可以训练的参数
             tf.add_to_collection('losses', tf.reduce_sum([regularizer(v) for v in tf.trainable_variables()]))
         # weight_in_mean = tf.reduce_mean(weight_in)
@@ -55,7 +55,7 @@ def lstm_net(name, data, n_hidden, n_steps, batch_size, regularizer=False, is_tr
 def fc_net(name, inputdata, w_shape, regularizer=False, is_traning=False):
     with tf.variable_scope(name):
         weight = tf.get_variable('weights', w_shape, initializer=tf.truncated_normal_initializer(stddev=0.1))
-        if is_traning is not None and regularizer is not None:
+        if is_traning is not False and regularizer is not False:
             tf.add_to_collection('losses', regularizer(weight))
         biases = tf.get_variable('biases', w_shape[-1], initializer=tf.constant_initializer(0.1))
         conve = tf.matmul(inputdata, weight) + biases
@@ -66,6 +66,37 @@ def fc_net(name, inputdata, w_shape, regularizer=False, is_traning=False):
         stddev_name = tf.sqrt(tf.reduce_mean(tf.square(weight - mean_name)))
         tf.summary.scalar(name + '_stddev', stddev_name)
     return conve
+
+
+# 定义卷积层函数
+def conv_net(name, inputdata, w_shape, strides_shape, padding='SAME'):
+    with tf.variable_scope(name):
+        weight = tf.get_variable('w', w_shape, initializer=tf.truncated_normal_initializer(stddev=0.02))
+        biases = tf.get_variable('b', w_shape[-1], initializer=tf.constant_initializer(0))
+        conve = tf.nn.conv2d(inputdata, weight, strides=strides_shape, padding=padding)
+        bias = tf.nn.bias_add(conve, biases)
+        return bias
+
+
+# 定义最大池化层函数
+def max_pool(name, inputdata, kszie, strides, padding='SAME'):
+    with tf.variable_scope(name):
+        pool_name = tf.nn.max_pool(inputdata, ksize=kszie, strides=strides, padding=padding)
+    return pool_name
+
+
+# 定义平均池化层函数
+def avg_pool(name, inputdata, kszie, strides, padding='SAME'):
+    with tf.variable_scope(name):
+        pool_name = tf.nn.avg_pool(inputdata, ksize=kszie, strides=strides, padding=padding)
+    return pool_name
+
+
+# 定义局部标准化层函数
+def norm_net(name, inputdata, lsize=4):
+    with tf.variable_scope(name):
+        norm = tf.nn.lrn(inputdata, lsize, bias=1.0, alpha=0.001 / 9.0, beta=0.75, name=name)
+    return norm
 
 
 # 定义损失函数
@@ -100,9 +131,7 @@ def trainning(loss, learning_rate):
 # 定义模型的准确率
 def evaluation(logits, labels, class_num):
     with tf.variable_scope('accuracy') as scope:
-        logits = tf.reshape(logits, [-1, class_num])
-        labels = tf.reshape(labels, [-1, class_num])
-        correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+        correct_prediction = tf.equal(tf.argmax(tf.nn.softmax(logits), 2), tf.argmax(labels, 2))
         # correct_prediction = tf.equal(tf.round(logits * 33), tf.round(labels * 33))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
         tf.summary.scalar('accuracy', accuracy)

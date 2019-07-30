@@ -16,11 +16,6 @@ OUTPUTNUM = 1
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-'''
-{'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 4, 'f': 5, 'g': 6, 'h': 7, 'i': 8, 'j': 9, 'k': 10, 'l': 11, 'm': 12, 'n': 13, 'o': 14, 'p': 15, 'q': 16, 'r': 17, 's': 18, 't': 19, 'u': 20, 'v': 21, 'w': 22, 'x': 23, 'y'
-: 24, 'z': 25}
-'''
-
 
 class cnn(object):
     def __init__(self, LEARNING_RATE, REGULARAZTION_RATE, IMAGE_SIZE, IMAGE_DEEP, BATCH_SIZE, CAPACITY, CLASS_NUM, KEEP_PROB, OUTPUTNUM):
@@ -43,23 +38,23 @@ class cnn(object):
             os.renames(filename + '\\' + i, newfiles + '\\' + str(fileid) + '_' + str(n) + '.jpg')
             n += 1
 
-    def get_file_1(self, filepath):
-        list_char = [chr(i) for i in range(97, 123)]
-        dict_char = dict(enumerate(list_char))
-        reversed_char = dict(zip(dict_char.values(), dict_char.keys()))
-        pic_list = []
-        pic_label = []
-        init_label = [0 for i in range(self.class_num)]
-        filename = os.listdir(filepath)
-        for i in filename:
-            pic_list.append(os.path.join(filepath, i))
-            for j in i.split('.')[0]:
-                tmp = init_label[:]
-                tmp[reversed_char[j]] = 1
-                pic_label.append(tmp)
-        np_pic = np.array(pic_list)
-        np_label = np.reshape(np.concatenate(np.array(pic_label, np.float32)), [-1, self.class_num * self.outputnum])
-        return np_pic, np_label
+    # def get_file_1(self, filepath):
+    #     list_char = [chr(i) for i in range(97, 123)]
+    #     dict_char = dict(enumerate(list_char))
+    #     reversed_char = dict(zip(dict_char.values(), dict_char.keys()))
+    #     pic_list = []
+    #     pic_label = []
+    #     init_label = [0 for i in range(self.class_num)]
+    #     filename = os.listdir(filepath)
+    #     for i in filename:
+    #         pic_list.append(os.path.join(filepath, i))
+    #         for j in i.split('.')[0]:
+    #             tmp = init_label[:]
+    #             tmp[reversed_char[j]] = 1
+    #             pic_label.append(tmp)
+    #     np_pic = np.array(pic_list)
+    #     np_label = np.reshape(np.concatenate(np.array(pic_label, np.float32)), [-1, self.class_num * self.outputnum])
+    #     return np_pic, np_label
 
     def get_file(self, filepath):
         pic_list = []
@@ -314,7 +309,6 @@ class cnn(object):
                 print('the number of each real category is %s' % real_count)
                 print('the number of accurate prediction category is %s' % each_count)
 
-
     def application(self, app_dir, logs_dir):
         filesname = os.listdir(app_dir)
         image_arry = []
@@ -341,6 +335,7 @@ class cnn(object):
                     image = np.reshape(image_arry[i], [1, self.image_size, self.image_size, self.image_deep])
                     prediction = sess.run(logit, feed_dict={X: image})
                     print(filesname[i], 'is', typename[int(prediction.argmax())])
+
 
 if __name__ == '__main__':
     lobj = cnn(LEARNING_RATE, REGULARAZTION_RATE, IMAGE_SIZE, IMAGE_DEEP, BATCH_SIZE, CAPACITY, CLASS_NUM, KEEP_PROB, OUTPUTNUM)

@@ -1,0 +1,3 @@
+﻿numpy==1.14.1
+tensorflow-gpu==1.6.0
+beautifulsoup4==4.6.0
